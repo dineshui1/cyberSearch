@@ -1,0 +1,142 @@
+import React from 'react'
+import ContentEditable from 'react-contenteditable'
+import sanitizeHtml from "sanitize-html";
+
+
+// Clipboard API and events reference: https://www.w3.org/TR/clipboard-apis/
+// Content Editable: https://www.taniarascia.com/content-editable-elements-in-javascript-react/
+// RTF Spec: http://www.biblioscape.com/rtf15_spec.htm
+// Data URI Spec: https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URIs , https://tools.ietf.org/html/rfc2397
+
+class PastableContentEditorBox extends React.Component {
+  constructor() {
+    super()
+    this.contentEditable = React.createRef();
+    //this.handleClick = this.handleClick.bind(this)
+    this.state = { html: "<b>Paste Area</i><br/>----------------------------<br/><br/><br/><br/></b>----------------------------" };
+  };
+  sanitizeConf = {
+    allowedTags: ["*"], //["b", "i", "em", "strong", "a", "p", "h1"]
+    allowedAttributes: { a: ["href"] }
+  };
+
+  sanitize = (evt) => {
+    this.setState({ html: sanitizeHtml(this.state.html, this.sanitizeConf) });
+  };
+
+  handleChange = (evt) => {
+    console.log('handleChange:', this);
+    this.setState({ html: evt.target.value });
+  };
+  pasteAsHtml = (evt) => {
+    console.log('pasteAsHtml:', this);
+    let htmlContent = evt.clipboardData.getData('text/html')
+    let rtfContent = evt.clipboardData.getData('text/rtf')
+    let imageMap = this.rtfImageMap(rtfContent)
+    if (imageMap.length !== 0) {
+      evt.preventDefault()
+    }
+    var cleanHtml = this.convertHtmlImages(htmlContent, imageMap)
+    console.log(imageMap)
+    this.html = cleanHtml
+    document.execCommand('insertHTML', false, cleanHtml)
+  };
+  hexToBase64 = (hexStr) => {
+    return btoa([...hexStr].reduce((acc, _, i) =>
+      acc += !(i - 1 & 1) ? String.fromCharCode(parseInt(hexStr.substring(i - 1, i + 1), 16)) : ""
+      , ""));
+  }
+  rtfImageMap = (rtfDocument) => {
+    rtfDocument = rtfDocument.replace(/(\r\n|\n|\r)/gm, '')
+    let imageInventory = []
+    let parts = Array.from(rtfDocument.split('\\shppict'))
+    parts = parts.slice(1)
+    for (var i = 0; i < parts.length; i++) {
+      const re = new RegExp(/(?<imagetype>[^\\]+)\\bliptag[^(blipuid)]+blipuid [^}]+}(?<imagedata>[^}]+)/gm);
+      const match = re.exec(parts[i]);
+      let imagetype = this.rtfPicTypeToMime(match.groups.imagetype);
+      let imagedata = this.hexToBase64(match.groups.imagedata);
+      imageInventory[i] = {
+        "index": i,
+        "imagetype": imagetype,
+        "imagedata": imagedata
+      }
+    }
+    return imageInventory
+  };
+  convertHtmlImages = (htmlString, rtfImages) => {
+    var htmlParser = new DOMParser();
+    var htmlDocument = htmlParser.parseFromString(htmlString, "text/html")
+    var imageTags = htmlDocument.querySelectorAll("img")
+
+    for (var i = 0; imageTags.length > i; i++) {
+      imageTags[i].src = this.newDataUriSource(rtfImages[i]);
+    }
+    return htmlDocument.documentElement.innerHTML
+  }
+  newDataUriSource = (rtfImage) => {
+    let dataUri = `data:${rtfImage.imagetype};base64,${rtfImage.imagedata}`;
+    return dataUri;
+  }
+  rtfPicTypeToMime = (picttype) => {
+    switch (picttype) {
+      case 'emfblip':
+        return "image/emf";
+      case 'pngblip':
+        return "image/png";
+      case 'jpegblip':
+        return "image/jpeg";
+      case 'macpict':
+        return "image/pict";
+      case (picttype.startsWith('pmmetafile')):
+        // OS/2 Metafile. Unsupported, could not easily find the appropriate mime type.
+        return "text/plain";
+      case (picttype.startsWith('wmetafile')):
+        return "image/wmf";
+      case (picttype.startsWith('dibitmap')):
+        return "image/bmp";
+      case (picttype.startsWith('wbitmap')):
+        return "image/bmp";
+      default:
+        // For unknown picture type, default to text/plain per Data URI Specication.
+        // REF: https://tools.ietf.org/html/rfc2397
+        return "text/plain";
+    }
+  };
+  handlePaste = (evt) => {
+    evt.preventDefault()
+    this.pasteAsHtml(evt);
+    console.log('handlePaste:', this);
+    //this.setState({html: evt.target.value});
+    //document.execCommand('insertHTML', false, content)
+  };
+
+  render = () => {
+    return (
+      <div class='pastable-content-editor'>
+
+        <p class='left-labels'>PastableContentEditorBox:</p>
+        <ContentEditable
+          class='pastable-content-editor-input'
+          innerRef={this.contentEditable}
+          html={this.state.html}
+          disabled={false}
+          onChange={this.handleChange}
+          onPaste={this.pasteAsHtml}
+          //onBlur={this.sanitize}
+          tagName='article'
+        />
+        <p class='left-labels'>PastableContentEditorBox (Source View):</p>
+        <textarea
+          className="pastable-content-editor-source"
+          value={this.state.html}
+          onChange={this.handleChange}
+        /* onBlur={this.sanitize} */
+        />
+      </div>
+
+    )
+  };
+};
+
+export default PastableContentEditorBox;
